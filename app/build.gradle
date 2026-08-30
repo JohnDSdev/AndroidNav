@@ -6,12 +6,31 @@ android {
     namespace 'com.johndsdev.androidnav'
     compileSdk 35
 
+    signingConfigs {
+        debugPersistent {
+            storeFile file("$rootDir/signing/androidnav-debug.keystore")
+            storePassword 'androidnav'
+            keyAlias 'androidnav'
+            keyPassword 'androidnav'
+            v1SigningEnabled true
+            v2SigningEnabled true
+            v3SigningEnabled true
+            v4SigningEnabled true
+        }
+    }
+
     defaultConfig {
-        applicationId 'com.johndsdev.androidnav'
+        applicationId 'com.johndsdev.androidnav.navidrome'
         minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '2.0'
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debugPersistent
+        }
     }
 
     compileOptions {
