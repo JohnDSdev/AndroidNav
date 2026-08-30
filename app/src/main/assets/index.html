@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>AndroidNav</title>
+<style>
+:root {
+  color-scheme: dark;
+  --fg: #f5f5f5;
+  --muted: rgba(255,255,255,.58);
+  --line: rgba(255,255,255,.17);
+  --glass: rgba(8,8,8,.58);
+  --bg-dim: .38;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: #050505; color: var(--fg); font-family: var(--font); }
+body { overflow-x: hidden; }
+button, input { font: inherit; }
+button { color: inherit; }
+#wallpaper {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-color: #050505;
+  background-image:
+    radial-gradient(circle, rgba(255,255,255,.65) 0 1px, transparent 1.3px),
+    radial-gradient(circle, rgba(255,255,255,.36) 0 1px, transparent 1.4px),
+    radial-gradient(circle, rgba(255,255,255,.23) 0 .8px, transparent 1.2px);
+  background-size: 53px 53px, 89px 89px, 31px 31px;
+  background-position: 4px 11px, 24px 39px, 7px 18px;
+  background-repeat: repeat;
+}
+#wallpaper::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,var(--bg-dim)); }
+#app { position: relative; z-index: 1; min-height: 100vh; padding: 18px 18px 24px; }
+.top { position: sticky; top: 0; z-index: 8; padding: 8px 0 12px; backdrop-filter: blur(12px); }
+.search-wrap { display: flex; gap: 10px; align-items: center; }
+.search {
+  flex: 1; min-width: 0; height: 50px; border: 1px solid var(--line); border-radius: 16px;
+  background: rgba(0,0,0,.32); display: flex; align-items: center; padding: 0 14px; gap: 10px;
+}
+.search svg { width: 20px; height: 20px; opacity: .75; flex: 0 0 auto; }
+.search input { width: 100%; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--fg); font-size: 18px; }
+.search input::placeholder { color: rgba(255,255,255,.72); opacity: 1; }
+.icon-btn { width: 48px; height: 48px; border-radius: 15px; border: 1px solid var(--line); background: rgba(0,0,0,.32); display: grid; place-items: center; }
+.icon-btn:active, .small-btn:active, .text-btn:active, .row:active { background: rgba(255,255,255,.12); }
+.tabs { display: flex; gap: 26px; margin: 18px 4px 4px; align-items: baseline; }
+.tab { border: 0; background: transparent; padding: 6px 0; font-size: 15px; color: var(--muted); text-transform: lowercase; }
+.tab.active { color: var(--fg); }
+.tab.active::after { content: ""; display: block; height: 2px; margin-top: 6px; background: currentColor; border-radius: 2px; }
+.viewport { overflow: hidden; }
+.track { display: flex; width: 200%; transition: transform .24s ease; align-items: flex-start; }
+.page { width: 50%; flex: 0 0 50%; min-width: 0; padding: 6px 2px 90px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; min-height: 50px; margin: 10px 2px 14px; gap: 12px; }
+.section-title { font-size: clamp(32px, 9vw, 48px); line-height: 1; font-weight: 440; letter-spacing: -.04em; }
+.section-meta { color: var(--muted); font-size: 14px; white-space: nowrap; }
+.list { display: grid; gap: 4px; }
+.row { display: flex; align-items: center; min-height: 68px; padding: 8px 4px; border-bottom: 1px solid rgba(255,255,255,.07); border-radius: 7px; }
+.row-main { flex: 1; min-width: 0; border: 0; background: transparent; color: inherit; text-align: left; padding: 0; }
+.row-title { font-size: 23px; line-height: 1.17; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-sub { margin-top: 4px; color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.small-btn { width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; font-size: 24px; flex: 0 0 auto; }
+.empty { padding: 34px 4px; color: var(--muted); font-size: 17px; line-height: 1.5; max-width: 430px; }
+.text-btn { border: 1px solid var(--line); border-radius: 13px; background: rgba(0,0,0,.32); padding: 11px 14px; min-height: 44px; }
+.permission { display: grid; gap: 14px; justify-items: start; }
+.now-playing { position: fixed; left: 18px; right: 18px; bottom: 14px; z-index: 9; border: 1px solid var(--line); border-radius: 17px; background: rgba(5,5,5,.84); backdrop-filter: blur(14px); display: none; align-items: center; padding: 8px 8px 8px 14px; gap: 10px; }
+.now-playing.show { display: flex; }
+.now-copy { flex: 1; min-width: 0; }
+.now-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 16px; }
+.now-sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.overlay { position: fixed; inset: 0; z-index: 20; display: none; background: rgba(0,0,0,.52); backdrop-filter: blur(8px); padding: 18px; align-items: flex-end; }
+.overlay.show { display: flex; }
+.sheet { width: 100%; max-height: 82vh; overflow: auto; border: 1px solid var(--line); border-radius: 24px; background: rgba(10,10,10,.96); padding: 20px; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.sheet-title { font-size: 28px; letter-spacing: -.03em; }
+.setting { padding: 14px 0; border-top: 1px solid rgba(255,255,255,.08); }
+.setting:first-of-type { border-top: 0; }
+.setting-name { font-size: 17px; margin-bottom: 5px; }
+.setting-desc { color: var(--muted); font-size: 13px; line-height: 1.4; margin-bottom: 10px; }
+.setting-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+input[type="range"] { width: 100%; accent-color: white; }
+.hidden-input { display: none; }
+.playlist-card { padding: 12px 4px 16px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.playlist-card button { width: 100%; border: 0; background: transparent; text-align: left; color: inherit; padding: 0; }
+.playlist-name { font-size: 28px; letter-spacing: -.025em; }
+.playlist-count { margin-top: 4px; color: var(--muted); font-size: 14px; }
+.detail-head { display: flex; align-items: center; gap: 8px; margin: 8px 0 16px; }
+.back-btn { border: 0; background: transparent; width: 44px; height: 44px; font-size: 28px; }
+.menu-list { display: grid; gap: 6px; }
+.menu-choice { min-height: 48px; text-align: left; border: 0; border-radius: 12px; padding: 0 12px; background: rgba(255,255,255,.06); color: inherit; }
+@media (min-width: 700px) {
+  #app { max-width: 720px; margin: 0 auto; }
+  .overlay { justify-content: center; }
+  .sheet { max-width: 620px; }
+}
+@media (prefers-reduced-motion: reduce) { .track { transition: none; } }
+</style>
+</head>
+<body>
+<div id="wallpaper" aria-hidden="true"></div>
+<main id="app">
+  <header class="top">
+    <div class="search-wrap">
+      <label class="search" aria-label="Search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+        <input id="searchInput" type="search" placeholder="songs" autocomplete="off" spellcheck="false">
+      </label>
+      <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings">☰</button>
+    </div>
+    <nav class="tabs" aria-label="Library sections">
+      <button class="tab active" id="songsTab" type="button">songs</button>
+      <button class="tab" id="playlistsTab" type="button">playlists</button>
+    </nav>
+  </header>
+
+  <div class="viewport" id="viewport">
+    <div class="track" id="track">
+      <section class="page" id="songsPage" aria-label="Songs">
+        <div class="section-head">
+          <div class="section-title">Songs</div>
+          <div class="section-meta" id="songCount"></div>
+        </div>
+        <div id="songsList" class="list"></div>
+      </section>
+
+      <section class="page" id="playlistsPage" aria-label="Playlists">
+        <div id="playlistsRoot"></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="now-playing" id="nowPlaying" aria-live="polite">
+  <div class="now-copy">
+    <div class="now-title" id="nowTitle"></div>
+    <div class="now-sub" id="nowSub"></div>
+  </div>
+  <button id="playPauseBtn" class="small-btn" type="button" aria-label="Pause or resume">Ⅱ</button>
+  <button id="stopBtn" class="small-btn" type="button" aria-label="Stop">×</button>
+</div>
+
+<div class="overlay" id="settingsOverlay" role="dialog" aria-modal="true" aria-label="Settings">
+  <section class="sheet">
+    <div class="sheet-head">
+      <div class="sheet-title">appearance</div>
+      <button class="small-btn" id="closeSettings" type="button" aria-label="Close settings">×</button>
+    </div>
+
+    <div class="setting">
+      <div class="setting-name">background</div>
+      <div class="setting-desc">pick any image. it stays on this device.</div>
+      <div class="setting-actions">
+        <button class="text-btn" id="pickBackground" type="button">choose image</button>
+        <button class="text-btn" id="clearBackground" type="button">reset</button>
+      </div>
+      <input class="hidden-input" id="backgroundInput" type="file" accept="image/*">
+    </div>
+
+    <div class="setting">
+      <div class="setting-name">font</div>
+      <div class="setting-desc">defaults to the normal Android/system font. import ttf, otf, woff, or woff2 if civilization has somehow produced one you prefer.</div>
+      <div class="setting-actions">
+        <button class="text-btn" id="pickFont" type="button">import font</button>
+        <button class="text-btn" id="clearFont" type="button">system font</button>
+      </div>
+      <input class="hidden-input" id="fontInput" type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2,application/font-sfnt">
+    </div>
+
+    <div class="setting">
+      <div class="setting-name">background dim</div>
+      <div class="setting-desc">keeps text readable when your wallpaper decides contrast is optional.</div>
+      <input id="dimRange" type="range" min="0" max="0.8" step="0.02" value="0.38">
+    </div>
+  </section>
+</div>
+
+<div class="overlay" id="menuOverlay" role="dialog" aria-modal="true" aria-label="Song menu">
+  <section class="sheet">
+    <div class="sheet-head">
+      <div class="sheet-title" id="menuSongTitle">song</div>
+      <button class="small-btn" id="closeMenu" type="button" aria-label="Close">×</button>
+    </div>
+    <div id="menuBody" class="menu-list"></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (q) => document.querySelector(q);
+  const songsList = $('#songsList');
+  const playlistsRoot = $('#playlistsRoot');
+  const searchInput = $('#searchInput');
+  const track = $('#track');
+  const songsTab = $('#songsTab');
+  const playlistsTab = $('#playlistsTab');
+  const wallpaper = $('#wallpaper');
+  const nowPlaying = $('#nowPlaying');
+  const nowTitle = $('#nowTitle');
+  const nowSub = $('#nowSub');
+  const playPauseBtn = $('#playPauseBtn');
+
+  let songs = [];
+  let page = Number(localStorage.getItem('page') || 0) === 1 ? 1 : 0;
+  let currentSong = null;
+  let playbackState = 'stopped';
+  let activePlaylistId = null;
+  let backgroundUrl = null;
+  let playlists = loadPlaylists();
+
+  function loadPlaylists() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('playlists') || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) { return []; }
+  }
+  function savePlaylists() { localStorage.setItem('playlists', JSON.stringify(playlists)); }
+  function esc(s) { return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+  function formatTime(ms) {
+    const sec = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    const m = Math.floor(sec / 60), s = String(sec % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  function setPage(next) {
+    page = next === 1 ? 1 : 0;
+    localStorage.setItem('page', String(page));
+    track.style.transform = `translateX(-${page * 50}%)`;
+    songsTab.classList.toggle('active', page === 0);
+    playlistsTab.classList.toggle('active', page === 1);
+    searchInput.placeholder = page === 0 ? 'songs' : 'playlists';
+    searchInput.value = '';
+    activePlaylistId = null;
+    render();
+  }
+
+  function hasBridge() { return typeof AndroidMusic !== 'undefined'; }
+  function hasPermission() {
+    try { return hasBridge() && AndroidMusic.hasAudioPermission(); }
+    catch (_) { return false; }
+  }
+
+  function refreshSongs() {
+    if (!hasPermission()) {
+      songs = [];
+      renderSongs();
+      return;
+    }
+    try {
+      const parsed = JSON.parse(AndroidMusic.getSongs());
+      songs = Array.isArray(parsed) ? parsed : [];
+    } catch (_) { songs = []; }
+    render();
+  }
+
+  function songMatches(song, q) {
+    if (!q) return true;
+    const hay = `${song.title} ${song.artist} ${song.album}`.toLowerCase();
+    return hay.includes(q);
+  }
+
+  function renderSongs() {
+    const q = searchInput.value.trim().toLowerCase();
+    $('#songCount').textContent = songs.length ? `${songs.length} ${songs.length === 1 ? 'song' : 'songs'}` : '';
+    if (!hasBridge()) {
+      songsList.innerHTML = `<div class="empty">Android media access is unavailable outside the app shell.</div>`;
+      return;
+    }
+    if (!hasPermission()) {
+      songsList.innerHTML = `<div class="empty permission"><span>AndroidNav needs audio permission to read the songs already on your phone.</span><button class="text-btn" id="allowAudio" type="button">allow music access</button></div>`;
+      $('#allowAudio').addEventListener('click', () => AndroidMusic.requestAudioPermission());
+      return;
+    }
+    const filtered = songs.filter(s => songMatches(s, q));
+    if (!filtered.length) {
+      songsList.innerHTML = `<div class="empty">${songs.length ? 'no songs match that search.' : 'no local music files found.'}</div>`;
+      return;
+    }
+    songsList.innerHTML = filtered.map(song => `
+      <div class="row" data-uri="${esc(song.uri)}">
+        <button class="row-main play-song" type="button" data-uri="${esc(song.uri)}">
+          <div class="row-title">${esc(song.title)}</div>
+          <div class="row-sub">${esc(song.artist)}${song.duration ? ` · ${formatTime(song.duration)}` : ''}</div>
+        </button>
+        <button class="small-btn song-menu" type="button" data-uri="${esc(song.uri)}" aria-label="Song options">⋯</button>
+      </div>`).join('');
+    songsList.querySelectorAll('.play-song').forEach(btn => btn.addEventListener('click', () => playSong(btn.dataset.uri)));
+    songsList.querySelectorAll('.song-menu').forEach(btn => btn.addEventListener('click', () => openSongMenu(btn.dataset.uri)));
+  }
+
+  function renderPlaylists() {
+    const q = searchInput.value.trim().toLowerCase();
+    if (activePlaylistId) {
+      const p = playlists.find(x => x.id === activePlaylistId);
+      if (!p) { activePlaylistId = null; renderPlaylists(); return; }
+      const tracks = (p.songUris || []).map(uri => songs.find(s => s.uri === uri)).filter(Boolean).filter(s => songMatches(s, q));
+      playlistsRoot.innerHTML = `
+        <div class="detail-head"><button class="back-btn" id="playlistBack" type="button" aria-label="Back">‹</button><div><div class="section-title">${esc(p.name)}</div><div class="section-meta">${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}</div></div></div>
+        <div class="list" id="playlistTracks">${tracks.length ? tracks.map(song => `
+          <div class="row"><button class="row-main playlist-play" type="button" data-uri="${esc(song.uri)}"><div class="row-title">${esc(song.title)}</div><div class="row-sub">${esc(song.artist)}</div></button><button class="small-btn playlist-remove" type="button" data-uri="${esc(song.uri)}" aria-label="Remove from playlist">×</button></div>`).join('') : '<div class="empty">this playlist is empty.</div>'}</div>`;
+      $('#playlistBack').addEventListener('click', () => { activePlaylistId = null; renderPlaylists(); });
+      playlistsRoot.querySelectorAll('.playlist-play').forEach(b => b.addEventListener('click', () => playSong(b.dataset.uri)));
+      playlistsRoot.querySelectorAll('.playlist-remove').forEach(b => b.addEventListener('click', () => removeFromPlaylist(p.id, b.dataset.uri)));
+      return;
+    }
+
+    const filtered = playlists.filter(p => p.name.toLowerCase().includes(q));
+    playlistsRoot.innerHTML = `
+      <div class="section-head"><div class="section-title">Playlists</div><button class="text-btn" id="newPlaylist" type="button">+ new</button></div>
+      <div>${filtered.length ? filtered.map(p => `<div class="playlist-card"><button type="button" data-id="${esc(p.id)}"><div class="playlist-name">${esc(p.name)}</div><div class="playlist-count">${(p.songUris || []).length} ${(p.songUris || []).length === 1 ? 'song' : 'songs'}</div></button></div>`).join('') : '<div class="empty">no playlists yet. humans invented categorization, so apparently we must continue the tradition.</div>'}</div>`;
+    $('#newPlaylist').addEventListener('click', createPlaylistPrompt);
+    playlistsRoot.querySelectorAll('.playlist-card button').forEach(b => b.addEventListener('click', () => { activePlaylistId = b.dataset.id; renderPlaylists(); }));
+  }
+
+  function render() { renderSongs(); renderPlaylists(); }
+
+  function playSong(uri) {
+    const song = songs.find(s => s.uri === uri);
+    if (!song || !hasBridge()) return;
+    currentSong = song;
+    nowTitle.textContent = song.title;
+    nowSub.textContent = song.artist;
+    nowPlaying.classList.add('show');
+    playbackState = 'loading';
+    playPauseBtn.textContent = 'Ⅱ';
+    AndroidMusic.play(uri);
+  }
+
+  function onPlaybackState(state) {
+    playbackState = state;
+    if (state === 'playing') playPauseBtn.textContent = 'Ⅱ';
+    if (state === 'paused') playPauseBtn.textContent = '▶';
+    if (state === 'ended' || state === 'stopped' || state === 'error') {
+      if (state !== 'ended') nowPlaying.classList.remove('show');
+      playPauseBtn.textContent = '▶';
+    }
+  }
+
+  function createPlaylistPrompt() {
+    const name = prompt('playlist name');
+    if (!name || !name.trim()) return null;
+    const p = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, name: name.trim(), songUris: [] };
+    playlists.push(p); savePlaylists(); renderPlaylists(); return p;
+  }
+
+  function addToPlaylist(playlistId, uri) {
+    const p = playlists.find(x => x.id === playlistId);
+    if (!p) return;
+    p.songUris = Array.isArray(p.songUris) ? p.songUris : [];
+    if (!p.songUris.includes(uri)) p.songUris.push(uri);
+    savePlaylists(); closeMenu(); renderPlaylists();
+  }
+
+  function removeFromPlaylist(playlistId, uri) {
+    const p = playlists.find(x => x.id === playlistId);
+    if (!p) return;
+    p.songUris = (p.songUris || []).filter(x => x !== uri);
+    savePlaylists(); renderPlaylists();
+  }
+
+  function openSongMenu(uri) {
+    const song = songs.find(s => s.uri === uri); if (!song) return;
+    $('#menuSongTitle').textContent = song.title;
+    const body = $('#menuBody');
+    const playlistButtons = playlists.map(p => `<button class="menu-choice add-choice" type="button" data-id="${esc(p.id)}">add to ${esc(p.name)}</button>`).join('');
+    body.innerHTML = `${playlistButtons || '<div class="empty">no playlists yet.</div>'}<button class="menu-choice" id="menuCreatePlaylist" type="button">+ create playlist</button>`;
+    body.querySelectorAll('.add-choice').forEach(b => b.addEventListener('click', () => addToPlaylist(b.dataset.id, uri)));
+    $('#menuCreatePlaylist').addEventListener('click', () => { const p = createPlaylistPrompt(); if (p) addToPlaylist(p.id, uri); });
+    $('#menuOverlay').classList.add('show');
+  }
+  function closeMenu() { $('#menuOverlay').classList.remove('show'); }
+
+  const DB_NAME = 'androidnav-assets';
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('assets');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function putAsset(key, blob) {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('assets', 'readwrite');
+      tx.objectStore('assets').put(blob, key);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }
+  async function getAsset(key) {
+    const db = await openDb();
+    const value = await new Promise((resolve, reject) => {
+      const tx = db.transaction('assets', 'readonly');
+      const req = tx.objectStore('assets').get(key);
+      req.onsuccess = () => resolve(req.result || null); req.onerror = () => reject(req.error);
+    });
+    db.close(); return value;
+  }
+  async function deleteAsset(key) {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('assets', 'readwrite');
+      tx.objectStore('assets').delete(key);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }
+
+  async function applyBackground(blob) {
+    if (backgroundUrl) URL.revokeObjectURL(backgroundUrl);
+    backgroundUrl = blob ? URL.createObjectURL(blob) : null;
+    wallpaper.style.backgroundImage = blob ? `url("${backgroundUrl}")` : '';
+    wallpaper.style.backgroundSize = blob ? 'cover' : '';
+    wallpaper.style.backgroundPosition = blob ? 'center' : '';
+  }
+  async function applyFont(blob) {
+    if (!blob) { document.documentElement.style.setProperty('--font', 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'); return; }
+    try {
+      const face = new FontFace('AndroidNavUserFont', blob);
+      await face.load();
+      document.fonts.add(face);
+      document.documentElement.style.setProperty('--font', 'AndroidNavUserFont, system-ui, sans-serif');
+    } catch (_) {
+      alert('that font could not be loaded.');
+    }
+  }
+
+  async function restoreAppearance() {
+    const dim = Number(localStorage.getItem('bgDim') || .38);
+    const safeDim = Number.isFinite(dim) ? Math.min(.8, Math.max(0, dim)) : .38;
+    document.documentElement.style.setProperty('--bg-dim', safeDim);
+    $('#dimRange').value = safeDim;
+    try { await applyBackground(await getAsset('background')); } catch (_) {}
+    try { await applyFont(await getAsset('font')); } catch (_) {}
+  }
+
+  songsTab.addEventListener('click', () => setPage(0));
+  playlistsTab.addEventListener('click', () => setPage(1));
+  searchInput.addEventListener('input', render);
+
+  let touchStartX = 0, touchStartY = 0;
+  $('#viewport').addEventListener('touchstart', e => {
+    const t = e.changedTouches[0]; touchStartX = t.clientX; touchStartY = t.clientY;
+  }, { passive: true });
+  $('#viewport').addEventListener('touchend', e => {
+    const t = e.changedTouches[0], dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+      if (dx < 0) setPage(1); else setPage(0);
+    }
+  }, { passive: true });
+
+  $('#settingsBtn').addEventListener('click', () => $('#settingsOverlay').classList.add('show'));
+  $('#closeSettings').addEventListener('click', () => $('#settingsOverlay').classList.remove('show'));
+  $('#settingsOverlay').addEventListener('click', e => { if (e.target === $('#settingsOverlay')) $('#settingsOverlay').classList.remove('show'); });
+  $('#closeMenu').addEventListener('click', closeMenu);
+  $('#menuOverlay').addEventListener('click', e => { if (e.target === $('#menuOverlay')) closeMenu(); });
+
+  $('#pickBackground').addEventListener('click', () => $('#backgroundInput').click());
+  $('#backgroundInput').addEventListener('change', async e => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('pick an image file.'); return; }
+    await putAsset('background', file); await applyBackground(file); e.target.value = '';
+  });
+  $('#clearBackground').addEventListener('click', async () => { await deleteAsset('background'); await applyBackground(null); });
+
+  $('#pickFont').addEventListener('click', () => $('#fontInput').click());
+  $('#fontInput').addEventListener('change', async e => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    await putAsset('font', file); await applyFont(file); e.target.value = '';
+  });
+  $('#clearFont').addEventListener('click', async () => { await deleteAsset('font'); await applyFont(null); });
+
+  $('#dimRange').addEventListener('input', e => {
+    const value = Math.min(.8, Math.max(0, Number(e.target.value) || 0));
+    document.documentElement.style.setProperty('--bg-dim', value);
+    localStorage.setItem('bgDim', String(value));
+  });
+
+  playPauseBtn.addEventListener('click', () => {
+    if (!hasBridge()) return;
+    if (playbackState === 'playing' || playbackState === 'loading') AndroidMusic.pause();
+    else if (currentSong) AndroidMusic.resume();
+  });
+  $('#stopBtn').addEventListener('click', () => { if (hasBridge()) AndroidMusic.stop(); currentSong = null; nowPlaying.classList.remove('show'); });
+
+  window.AndroidNav = { refreshSongs, onPlaybackState };
+  setPage(page);
+  restoreAppearance();
+  refreshSongs();
+})();
+</script>
+</body>
+</html>
