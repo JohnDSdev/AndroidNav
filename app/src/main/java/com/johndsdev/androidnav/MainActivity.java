@@ -14,6 +14,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
+import android.media.MediaDescription;
 import android.media.MediaMetadata;
 import android.media.MediaPlayer;
 import android.media.session.MediaSession;
@@ -30,6 +31,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -37,14 +39,21 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends Activity {
     private static final int REQ_BACKGROUND = 42;
     private static final String BACKGROUND_FILE = "androidnav_background.jpg";
     private static final String CHANNEL_ID = "androidnav_playback";
     private static final int NOTIFICATION_ID = 4107;
+
+    private static final String ACTION_PREVIOUS = "com.johndsdev.androidnav.PREVIOUS";
     private static final String ACTION_TOGGLE = "com.johndsdev.androidnav.TOGGLE";
+    private static final String ACTION_NEXT = "com.johndsdev.androidnav.NEXT";
+    private static final String ACTION_REPEAT = "com.johndsdev.androidnav.REPEAT";
     private static final String ACTION_STOP = "com.johndsdev.androidnav.STOP";
+    private static final String CUSTOM_REPEAT = "com.johndsdev.androidnav.REPEAT_CUSTOM";
 
     private WebView webView;
     private MediaPlayer mediaPlayer;
@@ -52,6 +61,10 @@ public class MainActivity extends Activity {
     private AudioManager audioManager;
     private NotificationManager notificationManager;
     private final Handler handler = new Handler(Looper.getMainLooper());
+
+    private final List<QueueTrack> queue = new ArrayList<>();
+    private volatile int currentQueueIndex = -1;
+    private volatile int repeatMode = 0;
 
     private volatile String currentId = "";
     private volatile String currentTitle = "";
@@ -61,6 +74,24 @@ public class MainActivity extends Activity {
     private volatile int cachedDurationMs = 0;
     private volatile boolean isPlaying = false;
     private volatile boolean prepared = false;
+
+    private static final class QueueTrack {
+        final String url;
+        final String id;
+        final String title;
+        final String artist;
+        final String album;
+        final int durationSeconds;
+
+        QueueTrack(String url, String id, String title, String artist, String album, int durationSeconds) {
+            this.url = url == null ? "" : url;
+            this.id = id == null ? "" : id;
+            this.title = title == null ? "" : title;
+            this.artist = artist == null ? "" : artist;
+            this.album = album == null ? "" : album;
+            this.durationSeconds = Math.max(0, durationSeconds);
+        }
+    }
 
     private final AudioManager.OnAudioFocusChangeListener audioFocusListener = focusChange -> {
         runOnUiThread(() -> {
@@ -79,8 +110,14 @@ public class MainActivity extends Activity {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent == null || intent.getAction() == null) return;
-            if (ACTION_TOGGLE.equals(intent.getAction())) toggleInternal();
-            else if (ACTION_STOP.equals(intent.getAction())) stopInternal(true);
+            switch (intent.getAction()) {
+                case ACTION_PREVIOUS: previousInternal(); break;
+                case ACTION_TOGGLE: toggleInternal(); break;
+                case ACTION_NEXT: nextInternal(false); break;
+                case ACTION_REPEAT: cycleRepeatModeInternal(); break;
+                case ACTION_STOP: stopInternal(true); break;
+                default: break;
+            }
         }
     };
 
@@ -139,8 +176,11 @@ public class MainActivity extends Activity {
             @Override public void onPlay() { resumeInternal(); }
             @Override public void onPause() { pauseInternal(); }
             @Override public void onStop() { stopInternal(true); }
-            @Override public void onSeekTo(long pos) {
-                seekInternal((int) Math.max(0, Math.min(Integer.MAX_VALUE, pos)));
+            @Override public void onSeekTo(long pos) { seekInternal((int) Math.max(0, Math.min(Integer.MAX_VALUE, pos))); }
+            @Override public void onSkipToNext() { nextInternal(false); }
+            @Override public void onSkipToPrevious() { previousInternal(); }
+            @Override public void onCustomAction(String action, Bundle extras) {
+                if (CUSTOM_REPEAT.equals(action)) cycleRepeatModeInternal();
             }
         });
         mediaSession.setActive(true);
@@ -149,7 +189,10 @@ public class MainActivity extends Activity {
 
     private void registerPlaybackReceiver() {
         IntentFilter filter = new IntentFilter();
+        filter.addAction(ACTION_PREVIOUS);
         filter.addAction(ACTION_TOGGLE);
+        filter.addAction(ACTION_NEXT);
+        filter.addAction(ACTION_REPEAT);
         filter.addAction(ACTION_STOP);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(playbackReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(playbackReceiver, filter);
@@ -245,19 +288,45 @@ public class MainActivity extends Activity {
     private void notifyBackgroundChanged() {
         updateMetadata();
         updateNotification();
-        if (webView != null) {
-            webView.post(() -> webView.evaluateJavascript(
-                    "window.androidBackgroundChanged && window.androidBackgroundChanged()", null));
+        runJs("window.androidBackgroundChanged && window.androidBackgroundChanged()");
+    }
+
+    private void runJs(String script) {
+        if (webView == null) return;
+        webView.post(() -> webView.evaluateJavascript(script, null));
+    }
+
+    private String repeatLabel() {
+        if (repeatMode == 2) return "Repeat one";
+        if (repeatMode == 1) return "Repeat all";
+        return "Repeat off";
+    }
+
+    private void updateSessionQueue() {
+        if (mediaSession == null) return;
+        List<MediaSession.QueueItem> items = new ArrayList<>();
+        for (int i = 0; i < queue.size(); i++) {
+            QueueTrack t = queue.get(i);
+            MediaDescription description = new MediaDescription.Builder()
+                    .setMediaId(t.id)
+                    .setTitle(t.title)
+                    .setSubtitle(t.artist)
+                    .build();
+            items.add(new MediaSession.QueueItem(description, i));
         }
+        mediaSession.setQueue(items);
+        mediaSession.setQueueTitle("AndroidNav queue");
     }
 
     private void updateMetadata() {
         if (mediaSession == null) return;
         MediaMetadata.Builder builder = new MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, currentId)
                 .putString(MediaMetadata.METADATA_KEY_TITLE, currentTitle)
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, currentArtist)
                 .putString(MediaMetadata.METADATA_KEY_ALBUM, currentAlbum)
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, cachedDurationMs);
+        if (currentQueueIndex >= 0) builder.putLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER, currentQueueIndex + 1L);
         Bitmap art = loadBackgroundBitmap(1024);
         if (art != null) {
             builder.putBitmap(MediaMetadata.METADATA_KEY_ART, art)
@@ -273,9 +342,14 @@ public class MainActivity extends Activity {
                 | PlaybackState.ACTION_PAUSE
                 | PlaybackState.ACTION_PLAY_PAUSE
                 | PlaybackState.ACTION_SEEK_TO
+                | PlaybackState.ACTION_SKIP_TO_NEXT
+                | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                 | PlaybackState.ACTION_STOP;
+        PlaybackState.CustomAction repeatAction = new PlaybackState.CustomAction.Builder(
+                CUSTOM_REPEAT, repeatLabel(), android.R.drawable.ic_popup_sync).build();
         PlaybackState playbackState = new PlaybackState.Builder()
                 .setActions(actions)
+                .addCustomAction(repeatAction)
                 .setState(state, cachedPositionMs, state == PlaybackState.STATE_PLAYING ? 1f : 0f,
                         SystemClock.elapsedRealtime())
                 .build();
@@ -298,16 +372,15 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pendingFlags |= PendingIntent.FLAG_IMMUTABLE;
         PendingIntent contentIntent = PendingIntent.getActivity(this, 1, openIntent, pendingFlags);
 
+        Notification.Action previousAction = new Notification.Action.Builder(
+                android.R.drawable.ic_media_previous, "Previous", broadcastPendingIntent(ACTION_PREVIOUS, 2)).build();
         Notification.Action toggleAction = new Notification.Action.Builder(
                 isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
-                isPlaying ? "Pause" : "Play",
-                broadcastPendingIntent(ACTION_TOGGLE, 2)
-        ).build();
-        Notification.Action stopAction = new Notification.Action.Builder(
-                android.R.drawable.ic_menu_close_clear_cancel,
-                "Stop",
-                broadcastPendingIntent(ACTION_STOP, 3)
-        ).build();
+                isPlaying ? "Pause" : "Play", broadcastPendingIntent(ACTION_TOGGLE, 3)).build();
+        Notification.Action nextAction = new Notification.Action.Builder(
+                android.R.drawable.ic_media_next, "Next", broadcastPendingIntent(ACTION_NEXT, 4)).build();
+        Notification.Action repeatAction = new Notification.Action.Builder(
+                android.R.drawable.ic_popup_sync, repeatLabel(), broadcastPendingIntent(ACTION_REPEAT, 5)).build();
 
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(this, CHANNEL_ID)
@@ -321,13 +394,14 @@ public class MainActivity extends Activity {
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
                 .setOngoing(isPlaying)
+                .addAction(previousAction)
                 .addAction(toggleAction)
-                .addAction(stopAction)
+                .addAction(nextAction)
+                .addAction(repeatAction)
                 .setStyle(new Notification.MediaStyle()
                         .setMediaSession(mediaSession.getSessionToken())
-                        .setShowActionsInCompactView(0, 1));
+                        .setShowActionsInCompactView(0, 1, 2));
         if (art != null) builder.setLargeIcon(art);
-
         notificationManager.notify(NOTIFICATION_ID, builder.build());
     }
 
@@ -339,6 +413,40 @@ public class MainActivity extends Activity {
 
     private void abandonAudioFocus() {
         if (audioManager != null) audioManager.abandonAudioFocus(audioFocusListener);
+    }
+
+    private void parseQueue(String json) throws Exception {
+        JSONArray array = new JSONArray(json == null ? "[]" : json);
+        queue.clear();
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject o = array.optJSONObject(i);
+            if (o == null) continue;
+            queue.add(new QueueTrack(
+                    o.optString("url", ""),
+                    o.optString("id", ""),
+                    o.optString("title", "Untitled"),
+                    o.optString("artist", "Unknown artist"),
+                    o.optString("album", ""),
+                    o.optInt("durationSeconds", 0)
+            ));
+        }
+        updateSessionQueue();
+    }
+
+    private void playQueueInternal(String json, int index) {
+        try {
+            parseQueue(json);
+            if (queue.isEmpty()) return;
+            int safe = Math.max(0, Math.min(index, queue.size() - 1));
+            playQueueIndex(safe);
+        } catch (Exception ignored) {}
+    }
+
+    private void playQueueIndex(int index) {
+        if (index < 0 || index >= queue.size()) return;
+        currentQueueIndex = index;
+        QueueTrack t = queue.get(index);
+        playInternal(t.url, t.id, t.title, t.artist, t.album, t.durationSeconds);
     }
 
     private void playInternal(String url, String id, String title, String artist, String album, int durationSeconds) {
@@ -353,6 +461,7 @@ public class MainActivity extends Activity {
         isPlaying = false;
         updateMetadata();
         updatePlaybackState(PlaybackState.STATE_BUFFERING);
+        updateNotification();
 
         try {
             mediaPlayer = new MediaPlayer();
@@ -372,10 +481,21 @@ public class MainActivity extends Activity {
                 updateNotification();
             });
             mediaPlayer.setOnCompletionListener(mp -> {
-                isPlaying = false;
                 cachedPositionMs = cachedDurationMs;
-                updatePlaybackState(PlaybackState.STATE_STOPPED);
-                updateNotification();
+                isPlaying = false;
+                if (repeatMode == 2) {
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) mp.seekTo(0, MediaPlayer.SEEK_CLOSEST);
+                        else mp.seekTo(0);
+                        cachedPositionMs = 0;
+                        mp.start();
+                        isPlaying = true;
+                        updatePlaybackState(PlaybackState.STATE_PLAYING);
+                        updateNotification();
+                    } catch (Exception ignored) {}
+                } else {
+                    nextInternal(true);
+                }
             });
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
                 isPlaying = false;
@@ -389,7 +509,53 @@ public class MainActivity extends Activity {
             isPlaying = false;
             prepared = false;
             updatePlaybackState(PlaybackState.STATE_ERROR);
+            updateNotification();
         }
+    }
+
+    private void nextInternal(boolean fromCompletion) {
+        if (queue.isEmpty() || currentQueueIndex < 0) {
+            if (fromCompletion) {
+                isPlaying = false;
+                updatePlaybackState(PlaybackState.STATE_STOPPED);
+                updateNotification();
+            }
+            return;
+        }
+        int next = currentQueueIndex + 1;
+        if (next >= queue.size()) {
+            if (repeatMode == 1) next = 0;
+            else {
+                if (fromCompletion) {
+                    isPlaying = false;
+                    cachedPositionMs = cachedDurationMs;
+                    updatePlaybackState(PlaybackState.STATE_STOPPED);
+                    updateNotification();
+                }
+                return;
+            }
+        }
+        playQueueIndex(next);
+    }
+
+    private void previousInternal() {
+        if (queue.isEmpty() || currentQueueIndex < 0) return;
+        int previous = currentQueueIndex - 1;
+        if (previous < 0) {
+            if (repeatMode == 1) previous = queue.size() - 1;
+            else {
+                seekInternal(0);
+                return;
+            }
+        }
+        playQueueIndex(previous);
+    }
+
+    private void cycleRepeatModeInternal() {
+        repeatMode = (repeatMode + 1) % 3;
+        updatePlaybackState(isPlaying ? PlaybackState.STATE_PLAYING : (prepared ? PlaybackState.STATE_PAUSED : PlaybackState.STATE_STOPPED));
+        updateNotification();
+        runJs("window.androidRepeatModeChanged && window.androidRepeatModeChanged(" + repeatMode + ")");
     }
 
     private void pauseInternal() {
@@ -447,21 +613,29 @@ public class MainActivity extends Activity {
             currentArtist = "";
             currentAlbum = "";
             cachedDurationMs = 0;
+            currentQueueIndex = -1;
+            queue.clear();
             if (notificationManager != null) notificationManager.cancel(NOTIFICATION_ID);
-            if (mediaSession != null) mediaSession.setMetadata(null);
+            if (mediaSession != null) {
+                mediaSession.setMetadata(null);
+                mediaSession.setQueue(new ArrayList<>());
+            }
         }
         updatePlaybackState(PlaybackState.STATE_STOPPED);
     }
 
     public final class PlayerBridge {
         @JavascriptInterface
-        public void play(String url, String id, String title, String artist, String album, int durationSeconds) {
-            runOnUiThread(() -> playInternal(url, id, title, artist, album, durationSeconds));
+        public void playQueue(String queueJson, int index) {
+            runOnUiThread(() -> playQueueInternal(queueJson, index));
         }
 
         @JavascriptInterface public void toggle() { runOnUiThread(MainActivity.this::toggleInternal); }
         @JavascriptInterface public void pause() { runOnUiThread(MainActivity.this::pauseInternal); }
         @JavascriptInterface public void seekTo(int positionMs) { runOnUiThread(() -> seekInternal(positionMs)); }
+        @JavascriptInterface public void next() { runOnUiThread(() -> nextInternal(false)); }
+        @JavascriptInterface public void previous() { runOnUiThread(MainActivity.this::previousInternal); }
+        @JavascriptInterface public void cycleRepeatMode() { runOnUiThread(MainActivity.this::cycleRepeatModeInternal); }
         @JavascriptInterface public void stop() { runOnUiThread(() -> stopInternal(true)); }
 
         @JavascriptInterface
@@ -476,6 +650,9 @@ public class MainActivity extends Activity {
                 obj.put("durationMs", cachedDurationMs);
                 obj.put("playing", isPlaying);
                 obj.put("prepared", prepared);
+                obj.put("repeatMode", repeatMode);
+                obj.put("queueIndex", currentQueueIndex);
+                obj.put("queueSize", queue.size());
                 return obj.toString();
             } catch (Exception ignored) {
                 return "{}";
@@ -514,10 +691,7 @@ public class MainActivity extends Activity {
             Uri uri = data.getData();
             boolean saved = saveBackgroundFromUri(uri);
             if (saved) notifyBackgroundChanged();
-            else if (webView != null) {
-                webView.post(() -> webView.evaluateJavascript(
-                        "window.androidBackgroundError && window.androidBackgroundError()", null));
-            }
+            else runJs("window.androidBackgroundError && window.androidBackgroundError()");
         }
     }
 
