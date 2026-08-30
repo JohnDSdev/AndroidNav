@@ -11,6 +11,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class MainActivity extends Activity {
     private static final int REQ_FILE_CHOOSER = 41;
     private WebView webView;
@@ -53,11 +56,34 @@ public class MainActivity extends Activity {
 
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("*/*");
+
+                // Android's DocumentsUI only understands MIME types here. WebView can
+                // return extension filters such as ".ttf" and ".otf" from HTML's
+                // accept attribute. Passing those strings as EXTRA_MIME_TYPES makes
+                // perfectly valid font files appear disabled/greyed out.
                 String[] accepted = fileChooserParams.getAcceptTypes();
-                if (accepted != null && accepted.length > 0) {
-                    intent.putExtra(Intent.EXTRA_MIME_TYPES, accepted);
+                List<String> mimeTypes = new ArrayList<>();
+                if (accepted != null) {
+                    for (String accept : accepted) {
+                        if (accept == null) continue;
+                        String value = accept.trim();
+                        if (!value.isEmpty() && value.contains("/") && !value.startsWith(".")) {
+                            mimeTypes.add(value);
+                        }
+                    }
                 }
+
+                if (mimeTypes.size() == 1) {
+                    intent.setType(mimeTypes.get(0));
+                } else if (mimeTypes.size() > 1) {
+                    intent.setType("*/*");
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toArray(new String[0]));
+                } else {
+                    // Extension-only accepts, such as .ttf/.otf/.woff/.woff2, must
+                    // use an unrestricted picker because Android MIME databases vary.
+                    intent.setType("*/*");
+                }
+
                 startActivityForResult(intent, REQ_FILE_CHOOSER);
                 return true;
             }
