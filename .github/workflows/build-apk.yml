@@ -32,12 +32,18 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Build debug APK
+      - name: Restore persistent debug signing key
+        run: base64 --decode signing/androidnav-debug.keystore.b64 > signing/androidnav-debug.keystore
+
+      - name: Build APK
         run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK signature
+        run: $ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AndroidNav-debug-apk
+          name: AndroidNav-v2-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
