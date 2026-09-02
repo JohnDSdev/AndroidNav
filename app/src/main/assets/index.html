@@ -154,7 +154,8 @@ button{cursor:pointer}
     const r=await fetch(apiUrl(method,extra),{cache:'no-store'}); if(!r.ok)throw new Error('server returned '+r.status);
     const j=await r.json(),x=j['subsonic-response']; if(!x||x.status!=='ok')throw new Error(x?.error?.message||'Navidrome request failed'); return x;
   }
-  function song(x){return{id:String(x.id),title:x.title||'Untitled',artist:x.artist||'Unknown artist',album:x.album||'',duration:(+x.duration||0)*1000};}
+  function song(x){return{id:String(x.id),title:x.title||'Untitled',artist:x.artist||'Unknown artist',album:x.album||'',duration:(+x.duration||0)*1000,created:x.created||''};}
+  function addedTime(s){const t=Date.parse(s.created||'');return Number.isFinite(t)?t:Number.MAX_SAFE_INTEGER;}
   function setStatus(text='',error=false){statusEl.textContent=text;statusEl.classList.toggle('error',!!error);}
   function setPage(next){page=next?1:0;localStorage.setItem('page',String(page));track.style.transform=`translateX(-${page*50}%)`;songsTab.classList.toggle('active',page===0);playlistsTab.classList.toggle('active',page===1);if(page===1&&configured()&&!playlists.length)loadPlaylists();}
 
@@ -164,7 +165,7 @@ button{cursor:pointer}
     try{
       let x=await api('search3',{query:'',songCount:500,songOffset:0,artistCount:0,albumCount:0}); songs=arr(x.searchResult3?.song).map(song);
       if(!songs.length){x=await api('search3',{query:' ',songCount:500,songOffset:0,artistCount:0,albumCount:0});songs=arr(x.searchResult3?.song).map(song);}
-      songs.sort((a,b)=>a.title.localeCompare(b.title,undefined,{sensitivity:'base'})); setStatus('');
+      songs.sort((a,b)=>addedTime(a)-addedTime(b)||a.title.localeCompare(b.title,undefined,{sensitivity:'base'})); setStatus('');
     }catch(e){songs=[];setStatus(e.message||String(e),true);} renderSongs();
   }
   async function loadPlaylists(){
