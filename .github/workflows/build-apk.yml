@@ -35,6 +35,23 @@ jobs:
       - name: Restore persistent debug signing key
         run: base64 --decode signing/androidnav-debug.keystore.b64 > signing/androidnav-debug.keystore
 
+      - name: Make sticky tabs show wallpaper
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/assets/index.html')
+          s = p.read_text()
+          s = s.replace(
+              '.top{position:sticky;top:0;z-index:10;isolation:isolate;margin:0 -16px 10px;padding:12px 20px 13px;overflow:hidden}',
+              '.top{position:sticky;top:0;z-index:10;isolation:isolate;margin:0 -16px 4px;padding:10px 20px 8px;overflow:hidden}'
+          )
+          s = s.replace(
+              '.top::after{content:"";position:absolute;inset:0;z-index:-1;background:rgba(0,0,0,calc(var(--dim) + .12));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}',
+              '.top::after{content:"";position:absolute;inset:0;z-index:-1;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}'
+          )
+          p.write_text(s)
+          PY
+
       - name: Build APK
         run: gradle :app:assembleDebug --stacktrace
 
