@@ -3,7 +3,11 @@ package com.johndsdev.androidnav;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.SystemClock;
-import android.test.InstrumentationTestCase;
+import android.app.Instrumentation;
+import androidx.test.platform.app.InstrumentationRegistry;
+import org.junit.Test;
+import org.junit.After;
+import static org.junit.Assert.*;
 import android.view.ViewGroup;
 import android.webkit.WebView;
 import org.json.JSONArray;
@@ -16,7 +20,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class PlaybackLifecycleTest extends InstrumentationTestCase {
+public class PlaybackLifecycleTest {
+    private Instrumentation getInstrumentation() { return InstrumentationRegistry.getInstrumentation(); }
     private Activity activity;
     private Activity open() {
         Intent intent = new Intent(getInstrumentation().getTargetContext(), MainActivity.class);
@@ -59,7 +64,7 @@ public class PlaybackLifecycleTest extends InstrumentationTestCase {
         try(FileOutputStream out = new FileOutputStream(f)){out.write(b.array());}
         return f;
     }
-    public void testQueueContinuesAfterActivityCloses() throws Exception {
+    @Test public void testQueueContinuesAfterActivityCloses() throws Exception {
         activity = open();
         JSONArray queue = new JSONArray();
         queue.put(new JSONObject().put("id","first").put("title","First test track").put("url",wav("first.wav",4).getAbsolutePath()));
@@ -79,8 +84,7 @@ public class PlaybackLifecycleTest extends InstrumentationTestCase {
         SystemClock.sleep(500);
         assertFalse(state().getBoolean("playing"));
     }
-    @Override protected void tearDown() throws Exception {
+    @After public void tearDown() throws Exception {
         if(activity != null){ try {js("AndroidPlayer.stop()");} catch(Exception ignored){} getInstrumentation().runOnMainSync(() -> activity.finish()); }
-        super.tearDown();
     }
 }
