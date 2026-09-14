@@ -320,8 +320,8 @@ public class PlaybackService extends Service {
         Notification.Action previousAction = new Notification.Action.Builder(
                 android.R.drawable.ic_media_previous, "Previous", broadcastPendingIntent(ACTION_PREVIOUS, 2)).build();
         Notification.Action toggleAction = new Notification.Action.Builder(
-                isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
-                isPlaying ? "Pause" : "Play", broadcastPendingIntent(ACTION_TOGGLE, 3)).build();
+                (isPlaying || (buffering && playWhenReady)) ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                (isPlaying || (buffering && playWhenReady)) ? "Pause" : "Play", broadcastPendingIntent(ACTION_TOGGLE, 3)).build();
         Notification.Action nextAction = new Notification.Action.Builder(
                 android.R.drawable.ic_media_next, "Next", broadcastPendingIntent(ACTION_NEXT, 4)).build();
         Notification.Action repeatAction = new Notification.Action.Builder(
@@ -618,6 +618,7 @@ public class PlaybackService extends Service {
             try {
                 JSONObject obj = new JSONObject();
                 obj.put("buffering", buffering);
+                obj.put("playWhenReady", playWhenReady);
                 obj.put("error", playbackError);
                 obj.put("id", currentId);
                 obj.put("title", currentTitle);
