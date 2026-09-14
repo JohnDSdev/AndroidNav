@@ -104,6 +104,14 @@ public class PlaybackService extends Service {
     private String playbackError = "";
     private AudioFocusRequest focusRequest;
     private WifiManager.WifiLock wifiLock;
+    private PowerManager.WakeLock preparationLock;
+    private final Runnable preparationTimeout = () -> {
+        if(buffering)failPlayback("The server took too long to respond. Tap play to retry.");
+    };
+    private void finishPreparation() {
+        handler.removeCallbacks(preparationTimeout);
+        if(preparationLock!=null && preparationLock.isHeld())preparationLock.release();
+    }
     private final Binder binder = new LocalBinder();
     public final class LocalBinder extends Binder { PlaybackService getService() { return PlaybackService.this; } }
     @Override public IBinder onBind(Intent intent) { return binder; }
@@ -159,6 +167,9 @@ public class PlaybackService extends Service {
         notificationManager=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
         WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
         if(wifi != null) { wifiLock=wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,"AndroidNav:stream"); wifiLock.setReferenceCounted(false); }
+        PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
+        preparationLock=power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"AndroidNav:prepare");
+        preparationLock.setReferenceCounted(false);
         createNotificationChannel();
         createMediaSession();
         IntentFilter filter=new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
@@ -409,6 +420,8 @@ public class PlaybackService extends Service {
         playWhenReady = true;
         playbackError = "";
         holdWifi(true);
+        preparationLock.acquire(60000);
+        handler.postDelayed(preparationTimeout,45000);
         updateMetadata();
         updatePlaybackState(PlaybackState.STATE_BUFFERING);
         updateNotification();
@@ -429,6 +442,7 @@ public class PlaybackService extends Service {
                 updateMetadata();
                 if(playWhenReady)resumeInternal();
                 else { holdWifi(false); updatePlaybackState(PlaybackState.STATE_PAUSED); updateNotification(); }
+                finishPreparation();
             });
             mediaPlayer.setOnCompletionListener(mp -> {
                 if(mp!=mediaPlayer)return;
@@ -565,6 +579,7 @@ public class PlaybackService extends Service {
     }
 
     private void stopInternal(boolean clearTrack) {
+        finishPreparation();
         buffering=false;
         playWhenReady=false;
         resumeOnFocusGain=false;

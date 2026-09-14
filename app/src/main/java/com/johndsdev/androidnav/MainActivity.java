@@ -45,7 +45,6 @@ import java.util.List;
 import android.content.ComponentName;
 import android.content.ServiceConnection;
 import android.os.IBinder;
-import java.util.function.Consumer;
 
 public class MainActivity extends Activity {
     private static final int REQ_BACKGROUND=42;
@@ -53,16 +52,17 @@ public class MainActivity extends Activity {
     private WebView webView;
     private volatile PlaybackService playback;
     private boolean bound;
-    private final List<Consumer<PlaybackService>> pending = new ArrayList<>();
+    private interface PlayerAction { void accept(PlaybackService player); }
+    private final List<PlayerAction> pending = new ArrayList<>();
     private final ServiceConnection connection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
             playback=((PlaybackService.LocalBinder)binder).getService();
-            for(Consumer<PlaybackService> action:pending)action.accept(playback);
+            for(PlayerAction action:pending)action.accept(playback);
             pending.clear();
         }
         @Override public void onServiceDisconnected(ComponentName name) { playback=null; }
     };
-    private void withPlayer(Consumer<PlaybackService> action) {
+    private void withPlayer(PlayerAction action) {
         runOnUiThread(() -> { if(playback!=null)action.accept(playback); else pending.add(action); });
     }
     @Override
