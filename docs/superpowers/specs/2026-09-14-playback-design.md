@@ -1,0 +1,6 @@
+# AndroidNav background playback and controls
+Approved in chat: custom controls and persistent mini-player; foreground audio service owns queue, player, session and notifications; activity reconnects without interrupting music; emulator installation and background transition checks.
+
+Retain Java MediaPlayer and the existing Navidrome queue contract to minimize migration risk. Bind the activity to a non-exported service; start the service when playback is requested, promote during buffering/playing, detach foreground status while paused. Keep all mutations on the main thread and expose an immutable JSON state snapshot to the WebView thread. Release the activity without releasing playback. Handle focus denial, transient loss, headphone disconnection and asynchronous prepare cancellation. Report stream errors with retry through play. Maintain package ID and signing key for upgrades.
+
+UI keeps user wallpaper and song order. Replace browser alerts with inline feedback, style inputs and controls consistently, add accessible range inputs and a fixed mini-player. Build and run instrumentation in GitHub Actions, including two generated audio tracks continuing after the activity finishes. Force-stop is outside Android background playback guarantees.
