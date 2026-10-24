@@ -355,7 +355,7 @@ public class MainActivity extends Activity {
                 | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                 | PlaybackState.ACTION_STOP;
         PlaybackState.CustomAction repeatAction = new PlaybackState.CustomAction.Builder(
-                CUSTOM_REPEAT, repeatLabel(), android.R.drawable.ic_popup_sync).build();
+                CUSTOM_REPEAT, repeatLabel(), repeatMode == 2 ? R.drawable.ic_repeat_one_modern : R.drawable.ic_repeat_modern).build();
         PlaybackState playbackState = new PlaybackState.Builder()
                 .setActions(actions)
                 .addCustomAction(repeatAction)
@@ -389,7 +389,8 @@ public class MainActivity extends Activity {
         Notification.Action nextAction = new Notification.Action.Builder(
                 android.R.drawable.ic_media_next, "Next", broadcastPendingIntent(ACTION_NEXT, 4)).build();
         Notification.Action repeatAction = new Notification.Action.Builder(
-                android.R.drawable.ic_popup_sync, repeatLabel(), broadcastPendingIntent(ACTION_REPEAT, 5)).build();
+                repeatMode == 2 ? R.drawable.ic_repeat_one_modern : R.drawable.ic_repeat_modern,
+                repeatLabel(), broadcastPendingIntent(ACTION_REPEAT, 5)).build();
 
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(this, CHANNEL_ID)
