@@ -296,6 +296,10 @@ public class MainActivity extends Activity {
         webView.post(() -> webView.evaluateJavascript(script, null));
     }
 
+    private void notifyWebPlayerChanged() {
+        runJs("window.androidPlaybackStateChanged && window.androidPlaybackStateChanged()");
+    }
+
     private String repeatLabel() {
         if (repeatMode == 2) return "Repeat one";
         if (repeatMode == 1) return "Repeat all";
@@ -320,11 +324,16 @@ public class MainActivity extends Activity {
 
     private void updateMetadata() {
         if (mediaSession == null) return;
+        // Some Android media surfaces concatenate artist and album. Avoid repeating identical metadata.
+        String distinctAlbum = currentAlbum.trim().equalsIgnoreCase(currentArtist.trim()) ? "" : currentAlbum;
         MediaMetadata.Builder builder = new MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, currentId)
                 .putString(MediaMetadata.METADATA_KEY_TITLE, currentTitle)
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, currentArtist)
-                .putString(MediaMetadata.METADATA_KEY_ALBUM, currentAlbum)
+                .putString(MediaMetadata.METADATA_KEY_ALBUM, distinctAlbum)
+                .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, currentTitle)
+                .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, currentArtist)
+                .putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, distinctAlbum)
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, cachedDurationMs);
         if (currentQueueIndex >= 0) builder.putLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER, currentQueueIndex + 1L);
         Bitmap art = loadBackgroundBitmap(1024);
@@ -462,6 +471,7 @@ public class MainActivity extends Activity {
         updateMetadata();
         updatePlaybackState(PlaybackState.STATE_BUFFERING);
         updateNotification();
+        notifyWebPlayerChanged();
 
         try {
             mediaPlayer = new MediaPlayer();
@@ -479,6 +489,7 @@ public class MainActivity extends Activity {
                 isPlaying = true;
                 updatePlaybackState(PlaybackState.STATE_PLAYING);
                 updateNotification();
+                notifyWebPlayerChanged();
             });
             mediaPlayer.setOnCompletionListener(mp -> {
                 cachedPositionMs = cachedDurationMs;
@@ -496,12 +507,14 @@ public class MainActivity extends Activity {
                 } else {
                     nextInternal(true);
                 }
+                notifyWebPlayerChanged();
             });
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
                 isPlaying = false;
                 prepared = false;
                 updatePlaybackState(PlaybackState.STATE_ERROR);
                 updateNotification();
+                notifyWebPlayerChanged();
                 return true;
             });
             mediaPlayer.prepareAsync();
@@ -556,6 +569,7 @@ public class MainActivity extends Activity {
         updatePlaybackState(isPlaying ? PlaybackState.STATE_PLAYING : (prepared ? PlaybackState.STATE_PAUSED : PlaybackState.STATE_STOPPED));
         updateNotification();
         runJs("window.androidRepeatModeChanged && window.androidRepeatModeChanged(" + repeatMode + ")");
+        notifyWebPlayerChanged();
     }
 
     private void pauseInternal() {
@@ -566,6 +580,7 @@ public class MainActivity extends Activity {
             isPlaying = false;
             updatePlaybackState(PlaybackState.STATE_PAUSED);
             updateNotification();
+            notifyWebPlayerChanged();
         } catch (IllegalStateException ignored) {}
     }
 
@@ -577,6 +592,7 @@ public class MainActivity extends Activity {
             isPlaying = true;
             updatePlaybackState(PlaybackState.STATE_PLAYING);
             updateNotification();
+            notifyWebPlayerChanged();
         } catch (IllegalStateException ignored) {}
     }
 
@@ -593,6 +609,7 @@ public class MainActivity extends Activity {
             else mediaPlayer.seekTo(target);
             cachedPositionMs = target;
             updatePlaybackState(isPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED);
+            notifyWebPlayerChanged();
         } catch (IllegalStateException ignored) {}
     }
 
@@ -622,6 +639,7 @@ public class MainActivity extends Activity {
             }
         }
         updatePlaybackState(PlaybackState.STATE_STOPPED);
+        notifyWebPlayerChanged();
     }
 
     public final class PlayerBridge {
