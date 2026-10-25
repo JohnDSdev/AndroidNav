@@ -54,7 +54,14 @@ jobs:
           assert 'id="goPlaylists"' not in html, 'old top playlists link remains'
           assert 'NOW PLAYING</div>' not in html, 'old mini player caption remains'
           assert '.song-details{display:none;margin:4px 0 17px 38px;padding:9px 6px 14px 2px;border:0' in html, 'inline player background not removed'
-          assert 'class="head songs-head"' in html, 'song count not moved below title'
+          assert 'class="head songs-head"' in html, 'songs header missing'
+          assert '.songs-head{display:flex;flex-direction:row;align-items:baseline;justify-content:space-between' in html, 'track count not right-aligned with heading'
+          assert "id=\"pickFont\"" in html and "id=\"clearFont\"" in html, 'font chooser buttons missing'
+          assert 'window.androidFontChanged' in html and 'getFontDataUrl()' in html, 'font integration missing'
+          native = Path('app/src/main/java/com/johndsdev/androidnav/MainActivity.java').read_text()
+          assert 'reportTelemetry(false)' in native and 'reportTelemetry(true)' in native, 'scrobble reporting missing'
+          assert 'recordPlaybackProgress()' in native and 'SystemClock.elapsedRealtime()' in native, 'listening-time measurement missing'
+          assert 'ACTION_OPEN_DOCUMENT' in native and 'REQ_FONT' in native, 'font picker missing'
           PY
           node --check /tmp/androidnav-ui.js
 
@@ -67,7 +74,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AndroidNav-v2.5.1-apk
+          name: AndroidNav-v2.6.0-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
