@@ -93,8 +93,8 @@ html,body{background:#050505;overscroll-behavior-y:contain}
 .page{padding:0 1px}
 .head{align-items:center;margin:6px 0 17px;gap:16px}
 .head-actions{display:flex;flex-direction:column;gap:7px;align-items:flex-end}
-.songs-head{display:flex;flex-direction:column;align-items:flex-start;gap:0;margin:8px 0 22px}
-.library-count{color:rgba(255,255,255,.70);font-size:14px;font-weight:450;line-height:1.35;margin-top:10px;letter-spacing:.01em}
+.songs-head{display:flex;flex-direction:row;align-items:baseline;justify-content:space-between;gap:16px;margin:8px 0 22px}
+.library-count{color:rgba(255,255,255,.70);font-size:14px;font-weight:450;line-height:1.35;margin:0;text-align:right;white-space:nowrap;flex-shrink:0;letter-spacing:.01em}
 .head .title{font-size:clamp(29px,7.5vw,38px);font-weight:720;letter-spacing:-.045em}
 .page-switch{appearance:none;border:1px solid rgba(255,255,255,.22);border-radius:99px;background:rgba(30,30,30,.24);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);color:#eee;padding:7px 12px;font-size:12px;font-weight:650;letter-spacing:.01em}
 .page-switch::after{content:"›";font-size:17px;margin-left:7px;vertical-align:-1px}
@@ -126,6 +126,7 @@ html,body{background:#050505;overscroll-behavior-y:contain}
 .fields input{appearance:none;border:1px solid rgba(255,255,255,.24);background:rgba(15,15,15,.38);border-radius:14px}
 .fields input:focus{border-color:rgba(255,255,255,.72);background:rgba(15,15,15,.50)}
 .fields input::placeholder{color:rgba(255,255,255,.46)}
+.font-status{font-size:12px;color:rgba(255,255,255,.75);overflow-wrap:anywhere;margin-top:7px;line-height:1.5}
 .btn{border-radius:99px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.24)}
 button:focus-visible,input:focus-visible,[role=slider]:focus-visible{outline:2px solid white;outline-offset:4px}
 .mini-player[hidden]{display:none}
@@ -275,6 +276,7 @@ button:focus-visible,input:focus-visible,[role=slider]:focus-visible{outline:2px
   function settingsHtml(){return `<section class="settings"><div class="settings-title">settings</div>
     <div class="setting"><div class="setting-name">navidrome</div><div class="setting-desc">server connection</div><div class="fields"><input id="serverInput" type="url" placeholder="https://music.example.com" value="${esc(cfg.server)}"><input id="userInput" type="text" placeholder="username" value="${esc(cfg.user)}"><input id="passInput" type="password" placeholder="password" value="${esc(cfg.pass)}"></div><div class="actions"><button id="connectBtn" class="btn" type="button">connect</button><button id="reloadBtn" class="btn" type="button">reload</button></div><div id="connectionStatus" class="setting-desc" style="margin-top:9px"></div></div>
     <div class="setting"><div class="setting-name">background</div><div class="setting-desc">also used as Android media artwork.</div><div class="actions"><button id="pickBackground" class="btn" type="button">choose image</button><button id="clearBackground" class="btn" type="button">reset</button></div></div>
+    <div class="setting"><div class="setting-name">custom font</div><div class="setting-desc">choose a .ttf, .otf, .woff, or .woff2 font from Downloads or Files. applies throughout the app and stays after restarting.</div><div class="actions"><button id="pickFont" class="btn" type="button">choose font</button><button id="clearFont" class="btn" type="button">use default</button></div><div id="fontStatus" class="font-status"></div></div>
     <div class="setting"><div class="setting-name">background dim</div><div class="dim-control"><div id="dimSeek" class="seek-wrap"><div class="seek-track"><div id="dimFill" class="seek-fill"></div><div id="dimThumb" class="seek-thumb"></div></div></div><div id="dimValue" class="dim-value"></div></div></div>
   </section>`;}
   function renderPlaylists(){
@@ -307,8 +309,38 @@ button:focus-visible,input:focus-visible,[role=slider]:focus-visible{outline:2px
   function bindSettings(){
     $('#connectBtn')?.addEventListener('click',async()=>{cfg.server=$('#serverInput').value.trim();cfg.user=$('#userInput').value.trim();cfg.pass=$('#passInput').value;localStorage.setItem('n.server',cfg.server);localStorage.setItem('n.user',cfg.user);localStorage.setItem('n.pass',cfg.pass);const cs=$('#connectionStatus');if(!configured()){cs.textContent='enter server, username, and password.';return;}cs.textContent='connecting…';try{await api('ping');cs.textContent='connected';await Promise.all([loadSongs(),loadPlaylists()]);}catch(e){cs.textContent=e.message||String(e);}});
     $('#reloadBtn')?.addEventListener('click',async()=>{if(!configured())return;const cs=$('#connectionStatus');cs.textContent='reloading…';await Promise.all([loadSongs(),loadPlaylists()]);cs.textContent='reloaded';});
-    $('#pickBackground')?.addEventListener('click',()=>{try{AndroidPlayer.chooseBackground();}catch(_){alert('background picker is unavailable.');}});$('#clearBackground')?.addEventListener('click',()=>{try{AndroidPlayer.clearBackground();}catch(_){}});bindDimControl();
+    $('#pickBackground')?.addEventListener('click',()=>{try{AndroidPlayer.chooseBackground();}catch(_){alert('background picker is unavailable.');}});$('#clearBackground')?.addEventListener('click',()=>{try{AndroidPlayer.clearBackground();}catch(_){}});
+    $('#pickFont')?.addEventListener('click',()=>{try{AndroidPlayer.chooseFont();}catch(_){alert('font picker is unavailable.');}});
+    $('#clearFont')?.addEventListener('click',()=>{try{AndroidPlayer.clearFont();}catch(_){}});
+    showFontName();bindDimControl();
   }
+  let fontLoadGeneration=0;
+  function showFontName(message){
+    const status=$('#fontStatus');if(!status)return;
+    let name='';try{name=window.AndroidPlayer?.getFontName()||'';}catch(_){}
+    status.textContent=message||(name?'selected: '+name:'using system font');
+  }
+  async function applyFontFromNative(){
+    const generation=++fontLoadGeneration;
+    let src='';try{src=window.AndroidPlayer?.getFontDataUrl()||'';}catch(_){}
+    if(!src){document.documentElement.style.removeProperty('--font');showFontName();return;}
+    try{
+      const face=new FontFace('AndroidNavCustom',`url("${src}")`);
+      await face.load();
+      if(generation!==fontLoadGeneration)return;
+      document.fonts.add(face);
+      document.documentElement.style.setProperty('--font','"AndroidNavCustom",system-ui,sans-serif');
+      showFontName();
+    }catch(e){
+      if(generation!==fontLoadGeneration)return;
+      document.documentElement.style.removeProperty('--font');
+      showFontName('font could not be loaded; using system font');
+      console.warn('Font load failed',e);
+    }
+  }
+  window.androidFontChanged=applyFontFromNative;
+  window.androidFontError=()=>showFontName('invalid font. choose a valid .ttf, .otf, .woff, or .woff2 file (max 8 MB).');
+
   function applyBackgroundFromNative(){
     let data='';try{data=window.AndroidPlayer?AndroidPlayer.getBackgroundDataUrl():'';}catch(_){}const root=document.documentElement;
     if(data){const safe=data.replace(/"/g,'%22');root.style.setProperty('--wall-image',`url("${safe}")`);root.style.setProperty('--wall-size','cover');root.style.setProperty('--wall-pos','center');root.style.setProperty('--wall-repeat','no-repeat');}
@@ -392,7 +424,7 @@ button:focus-visible,input:focus-visible,[role=slider]:focus-visible{outline:2px
 
   $('#viewport').addEventListener('touchstart',e=>{if(isSeeking)return;const t=e.changedTouches[0];swipeStartX=t.clientX;swipeStartY=t.clientY;},{passive:true});
   $('#viewport').addEventListener('touchend',e=>{if(isSeeking)return;const t=e.changedTouches[0],dx=t.clientX-swipeStartX,dy=t.clientY-swipeStartY;if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy)*1.35){if(dx<0)setPage(1);else setPage(0);}},{passive:true});
-  const initialDim=Math.max(0,Math.min(.8,Number(localStorage.getItem('bgDim')||.26)));document.documentElement.style.setProperty('--dim',initialDim);applyBackgroundFromNative();setPage(page);renderSongs();renderPlaylists();if(configured())Promise.all([loadSongs(),loadPlaylists()]);pollPlayer();
+  const initialDim=Math.max(0,Math.min(.8,Number(localStorage.getItem('bgDim')||.26)));document.documentElement.style.setProperty('--dim',initialDim);applyBackgroundFromNative();applyFontFromNative();setPage(page);renderSongs();renderPlaylists();if(configured())Promise.all([loadSongs(),loadPlaylists()]);pollPlayer();
 })();
 </script>
 </body>
