@@ -587,8 +587,11 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception ex) {
                 // Don't include the full URL, auth token or user password in either UI or logs.
-                String message = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
-                if (message.length() > 100) message = ex.getClass().getSimpleName();
+                String message = ex.getMessage();
+                if (message == null || (!message.matches("HTTP [0-9]{3}") &&
+                        !message.matches("Navidrome API error -?[0-9]+") &&
+                        !message.equals("unexpected stream URL path") &&
+                        !message.equals("invalid server URL"))) message = ex.getClass().getSimpleName();
                 if (songId.equals(currentId)) {
                     if (submission) telemetryPlayStatus = "failed: " + message;
                     else telemetryNowPlayingStatus = "failed: " + message;
@@ -635,7 +638,7 @@ public class MainActivity extends Activity {
         }
 
         if (!telemetrySubmitted) {
-            long threshold = cachedDurationMs > 0 ? Math.max(30000, Math.min(240000, cachedDurationMs / 2L)) : 240000;
+            long threshold = cachedDurationMs > 0 ? Math.max(1000, Math.min(240000, cachedDurationMs / 2L)) : 240000;
             if (telemetryListenedMs >= threshold) {
                 telemetrySubmitted = true;
                 reportTelemetry(true);
