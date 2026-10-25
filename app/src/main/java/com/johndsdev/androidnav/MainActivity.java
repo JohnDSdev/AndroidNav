@@ -9,6 +9,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -39,11 +41,18 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends Activity {
     private static final int REQ_BACKGROUND = 42;
+    private static final int REQ_FONT = 43;
+    private static final String FONT_FILE = "androidnav_user_font.bin";
     private static final String BACKGROUND_FILE = "androidnav_background.jpg";
     private static final String CHANNEL_ID = "androidnav_playback";
     private static final int NOTIFICATION_ID = 4107;
@@ -61,6 +70,13 @@ public class MainActivity extends Activity {
     private AudioManager audioManager;
     private NotificationManager notificationManager;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService telemetryExecutor = Executors.newSingleThreadExecutor();
+    // Each playback of a track is counted independently, including repeat-one.
+    private String telemetryStreamUrl = "";
+    private long telemetryStartedAt = 0;
+    private long telemetryLastTickAt = 0;
+    private long telemetryListenedMs = 0;
+    private boolean telemetrySubmitted = false;
 
     private final List<QueueTrack> queue = new ArrayList<>();
     private volatile int currentQueueIndex = -1;
@@ -128,6 +144,7 @@ public class MainActivity extends Activity {
                 try {
                     cachedPositionMs = mediaPlayer.getCurrentPosition();
                     cachedDurationMs = Math.max(cachedDurationMs, mediaPlayer.getDuration());
+                    recordPlaybackProgress();
                 } catch (IllegalStateException ignored) {}
             }
             handler.postDelayed(this, 250);
@@ -205,6 +222,70 @@ public class MainActivity extends Activity {
             channel.setSound(null, null);
             notificationManager.createNotificationChannel(channel);
         }
+    }
+
+    private File fontFile() { return new File(getFilesDir(), FONT_FILE); }
+
+    private String fontFileName() {
+        if (!fontFile().isFile()) return "";
+        return getPreferences(MODE_PRIVATE).getString("selected_font_name", "custom font");
+    }
+
+    // Accept only actual font data, not arbitrary files with a .ttf extension.
+    private String fontType(byte[] header) {
+        if (header.length < 4) return "";
+        String magic = new String(header, 0, 4, StandardCharsets.ISO_8859_1);
+        if ("OTTO".equals(magic)) return "font/otf";
+        if ("wOFF".equals(magic)) return "font/woff";
+        if ("wOF2".equals(magic)) return "font/woff2";
+        if ((header[0] == 0 && header[1] == 1 && header[2] == 0 && header[3] == 0) || "true".equals(magic)) return "font/ttf";
+        return "";
+    }
+
+    private boolean saveFontFromUri(Uri uri) {
+        if (uri == null) return false;
+        File temp = new File(getFilesDir(), "androidnav_font_pending.tmp");
+        String displayName = "custom font";
+        try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) displayName = cursor.getString(0);
+        } catch (Exception ignored) {}
+        if (displayName == null || displayName.trim().isEmpty()) displayName = "custom font";
+        try (InputStream in = getContentResolver().openInputStream(uri);
+             FileOutputStream out = new FileOutputStream(temp)) {
+            if (in == null) return false;
+            byte[] buf = new byte[8192];
+            int n;
+            long count = 0;
+            while ((n = in.read(buf)) != -1) {
+                count += n;
+                if (count > 8 * 1024 * 1024) return false;
+                out.write(buf, 0, n);
+            }
+        } catch (Exception ignored) { temp.delete(); return false; }
+        try (FileInputStream in = new FileInputStream(temp)) {
+            byte[] header = new byte[4];
+            if (in.read(header) != 4 || fontType(header).isEmpty()) return false;
+            if (!temp.renameTo(fontFile())) return false;
+            getPreferences(MODE_PRIVATE).edit().putString("selected_font_name", displayName).apply();
+            return true;
+        } catch (Exception ignored) { return false; }
+        finally { if (temp.exists()) temp.delete(); }
+    }
+
+    private String fontDataUrl() {
+        if (!fontFile().isFile()) return "";
+        try (FileInputStream in = new FileInputStream(fontFile()); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[8192]; int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            byte[] data = out.toByteArray();
+            String type = fontType(data);
+            if (type.isEmpty()) return "";
+            return "data:" + type + ";base64," + Base64.encodeToString(data, Base64.NO_WRAP);
+        } catch (Exception ignored) { return ""; }
+    }
+
+    private void notifyFontChanged() {
+        runJs("window.androidFontChanged && window.androidFontChanged()");
     }
 
     private File backgroundFile() {
@@ -425,6 +506,72 @@ public class MainActivity extends Activity {
         if (audioManager != null) audioManager.abandonAudioFocus(audioFocusListener);
     }
 
+    private void resetTelemetrySession() {
+        telemetryStreamUrl = "";
+        telemetryStartedAt = 0;
+        telemetryLastTickAt = 0;
+        telemetryListenedMs = 0;
+        telemetrySubmitted = false;
+    }
+
+    // Subsonic scrobble: submission=false = now playing, true = a counted play.
+    // Keep the exact server and authentication already used by this track's stream URL.
+    private void reportTelemetry(boolean submission) {
+        if (telemetryStreamUrl.isEmpty() || currentId.isEmpty()) return;
+        final String source = telemetryStreamUrl;
+        final long startedAt = telemetryStartedAt;
+        telemetryExecutor.execute(() -> {
+            HttpURLConnection conn = null;
+            try {
+                Uri stream = Uri.parse(source);
+                String path = stream.getPath();
+                if (path == null || !path.endsWith("/stream.view")) return;
+                if (!"https".equalsIgnoreCase(stream.getScheme()) && !"http".equalsIgnoreCase(stream.getScheme())) return;
+                String scrobblePath = path.substring(0, path.length() - "stream.view".length()) + "scrobble.view";
+                Uri uri = stream.buildUpon().path(scrobblePath)
+                        .appendQueryParameter("submission", String.valueOf(submission))
+                        .appendQueryParameter("time", String.valueOf(startedAt)).build();
+                conn = (HttpURLConnection) new URL(uri.toString()).openConnection();
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                conn.setUseCaches(false);
+                conn.setRequestMethod("GET");
+                if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) throw new Exception("HTTP " + conn.getResponseCode());
+                try (InputStream in = conn.getInputStream(); ByteArrayOutputStream body = new ByteArrayOutputStream()) {
+                    byte[] bytes = new byte[4096]; int n;
+                    while ((n = in.read(bytes)) >= 0 && body.size() < 32768) body.write(bytes, 0, n);
+                    JSONObject response = new JSONObject(body.toString("UTF-8")).getJSONObject("subsonic-response");
+                    if (!"ok".equalsIgnoreCase(response.optString("status"))) throw new Exception("Server rejected scrobble");
+                }
+            } catch (Exception ex) {
+                android.util.Log.w("AndroidNav", "Navidrome scrobble request failed: " + ex.getClass().getSimpleName());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        });
+    }
+
+    private void beginTelemetry(String url) {
+        resetTelemetrySession();
+        telemetryStreamUrl = url == null ? "" : url;
+        telemetryStartedAt = System.currentTimeMillis();
+        telemetryLastTickAt = SystemClock.elapsedRealtime();
+        reportTelemetry(false);
+    }
+
+    private void recordPlaybackProgress() {
+        if (!isPlaying || telemetryStartedAt == 0 || telemetrySubmitted) return;
+        long now = SystemClock.elapsedRealtime();
+        if (telemetryLastTickAt > 0) telemetryListenedMs += Math.min(5000, Math.max(0, now - telemetryLastTickAt));
+        telemetryLastTickAt = now;
+        // Count a play after 50% or four minutes, whichever comes first, with a 30s minimum.
+        long threshold = cachedDurationMs > 0 ? Math.max(30000, Math.min(240000, cachedDurationMs / 2L)) : 240000;
+        if (telemetryListenedMs >= threshold) {
+            telemetrySubmitted = true;
+            reportTelemetry(true);
+        }
+    }
+
     private void parseQueue(String json) throws Exception {
         JSONArray array = new JSONArray(json == null ? "[]" : json);
         queue.clear();
@@ -488,11 +635,13 @@ public class MainActivity extends Activity {
                 requestAudioFocus();
                 mp.start();
                 isPlaying = true;
+                beginTelemetry(url);
                 updatePlaybackState(PlaybackState.STATE_PLAYING);
                 updateNotification();
                 notifyWebPlayerChanged();
             });
             mediaPlayer.setOnCompletionListener(mp -> {
+                recordPlaybackProgress();
                 cachedPositionMs = cachedDurationMs;
                 isPlaying = false;
                 if (repeatMode == 2) {
@@ -502,6 +651,7 @@ public class MainActivity extends Activity {
                         cachedPositionMs = 0;
                         mp.start();
                         isPlaying = true;
+                        beginTelemetry(url);
                         updatePlaybackState(PlaybackState.STATE_PLAYING);
                         updateNotification();
                     } catch (Exception ignored) {}
@@ -578,7 +728,9 @@ public class MainActivity extends Activity {
         try {
             if (mediaPlayer.isPlaying()) mediaPlayer.pause();
             cachedPositionMs = mediaPlayer.getCurrentPosition();
+            recordPlaybackProgress();
             isPlaying = false;
+            telemetryLastTickAt = 0;
             updatePlaybackState(PlaybackState.STATE_PAUSED);
             updateNotification();
             notifyWebPlayerChanged();
@@ -591,6 +743,7 @@ public class MainActivity extends Activity {
             requestAudioFocus();
             mediaPlayer.start();
             isPlaying = true;
+            telemetryLastTickAt = SystemClock.elapsedRealtime();
             updatePlaybackState(PlaybackState.STATE_PLAYING);
             updateNotification();
             notifyWebPlayerChanged();
@@ -615,6 +768,8 @@ public class MainActivity extends Activity {
     }
 
     private void stopInternal(boolean clearTrack) {
+        recordPlaybackProgress();
+        resetTelemetrySession();
         if (mediaPlayer != null) {
             try { mediaPlayer.stop(); } catch (Exception ignored) {}
             try { mediaPlayer.reset(); } catch (Exception ignored) {}
@@ -701,6 +856,24 @@ public class MainActivity extends Activity {
         public String getBackgroundDataUrl() {
             return backgroundDataUrl();
         }
+
+        @JavascriptInterface public String getFontDataUrl() { return fontDataUrl(); }
+        @JavascriptInterface public String getFontName() { return fontFileName(); }
+        @JavascriptInterface public void chooseFont() {
+            runOnUiThread(() -> {
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*"); // Include Downloads font files even when provider MIME types are inaccurate.
+                startActivityForResult(intent, REQ_FONT);
+            });
+        }
+        @JavascriptInterface public void clearFont() {
+            runOnUiThread(() -> {
+                fontFile().delete();
+                getPreferences(MODE_PRIVATE).edit().remove("selected_font_name").apply();
+                notifyFontChanged();
+            });
+        }
     }
 
     @Override
@@ -711,6 +884,9 @@ public class MainActivity extends Activity {
             boolean saved = saveBackgroundFromUri(uri);
             if (saved) notifyBackgroundChanged();
             else runJs("window.androidBackgroundError && window.androidBackgroundError()");
+        } else if (requestCode == REQ_FONT && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            if (saveFontFromUri(data.getData())) notifyFontChanged();
+            else runJs("window.androidFontError && window.androidFontError()");
         }
     }
 
@@ -719,6 +895,7 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(progressTicker);
         try { unregisterReceiver(playbackReceiver); } catch (Exception ignored) {}
         stopInternal(true);
+        telemetryExecutor.shutdown();
         if (mediaSession != null) {
             mediaSession.setActive(false);
             mediaSession.release();
