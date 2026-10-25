@@ -61,6 +61,11 @@ jobs:
           native = Path('app/src/main/java/com/johndsdev/androidnav/MainActivity.java').read_text()
           assert 'reportTelemetry(false)' in native and 'reportTelemetry(true)' in native, 'scrobble reporting missing'
           assert 'recordPlaybackProgress()' in native and 'SystemClock.elapsedRealtime()' in native, 'listening-time measurement missing'
+          assert 'appendQueryParameter("id", songId)' in native, 'scrobble song id missing'
+          assert 'clearQuery()' in native, 'scrobble uses stream query without filtering'
+          assert 'now - telemetryLastNowPlayingMs >= 30000' in native, 'now playing heartbeat missing'
+          assert 'getTelemetryStatus()' in native and 'testNowPlaying()' in native, 'telemetry debug API missing'
+          assert 'id="telemetryStatus"' in html and 'id="testNowPlaying"' in html, 'telemetry debug controls missing'
           assert 'ACTION_OPEN_DOCUMENT' in native and 'REQ_FONT' in native, 'font picker missing'
           PY
           node --check /tmp/androidnav-ui.js
@@ -74,7 +79,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AndroidNav-v2.6.0-apk
+          name: AndroidNav-v2.6.1-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
