@@ -51,6 +51,10 @@ jobs:
           Path('/tmp/androidnav-ui.js').write_text(script.group(1))
           assert 'position:sticky' not in html, 'sticky tab header remains'
           assert 'androidPlaybackStateChanged' in html, 'player update hook missing'
+          assert 'id="goPlaylists"' not in html, 'old top playlists link remains'
+          assert 'NOW PLAYING</div>' not in html, 'old mini player caption remains'
+          assert '.song-details{display:none;margin:4px 0 17px 38px;padding:9px 6px 14px 2px;border:0' in html, 'inline player background not removed'
+          assert 'class="head songs-head"' in html, 'song count not moved below title'
           PY
           node --check /tmp/androidnav-ui.js
 
@@ -63,7 +67,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AndroidNav-v2.5.0-apk
+          name: AndroidNav-v2.5.1-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
