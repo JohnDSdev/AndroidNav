@@ -512,14 +512,6 @@ public class MainActivity extends Activity {
         if (audioManager != null) audioManager.abandonAudioFocus(audioFocusListener);
     }
 
-    private void resetTelemetrySession() {
-        telemetryStreamUrl = "";
-        telemetryStartedAt = 0;
-        telemetryLastTickAt = 0;
-        telemetryListenedMs = 0;
-        telemetrySubmitted = false;
-    }
-
     // Subsonic 1.16: submission=false announces the active song; true counts a play.
     // Authenticate with the same credentials used to stream, and explicitly include song id.
     private void reportTelemetry(boolean submission) {
