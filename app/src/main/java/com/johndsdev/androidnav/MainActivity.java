@@ -77,6 +77,12 @@ public class MainActivity extends Activity {
     private long telemetryLastTickAt = 0;
     private long telemetryListenedMs = 0;
     private boolean telemetrySubmitted = false;
+    private long telemetryLastNowPlayingMs = 0;
+    private volatile String telemetryNowPlayingStatus = "not sent yet";
+    private volatile String telemetryPlayStatus = "not submitted yet";
+    private volatile String telemetryStatusTrack = "";
+    private volatile long telemetryLastNowPlayingSuccessAt = 0;
+    private volatile long telemetryLastPlaySuccessAt = 0;
 
     private final List<QueueTrack> queue = new ArrayList<>();
     private volatile int currentQueueIndex = -1;
@@ -514,41 +520,93 @@ public class MainActivity extends Activity {
         telemetrySubmitted = false;
     }
 
-    // Subsonic scrobble: submission=false = now playing, true = a counted play.
-    // Keep the exact server and authentication already used by this track's stream URL.
+    // Subsonic 1.16: submission=false announces the active song; true counts a play.
+    // Authenticate with the same credentials used to stream, and explicitly include song id.
     private void reportTelemetry(boolean submission) {
-        if (telemetryStreamUrl.isEmpty() || currentId.isEmpty()) return;
         final String source = telemetryStreamUrl;
+        final String songId = currentId;
         final long startedAt = telemetryStartedAt;
+        if (source.isEmpty() || songId.isEmpty()) {
+            if (submission) telemetryPlayStatus = "missing song or server connection";
+            else telemetryNowPlayingStatus = "missing song or server connection";
+            return;
+        }
+        if (submission) telemetryPlayStatus = "sending…";
+        else telemetryNowPlayingStatus = "sending…";
         telemetryExecutor.execute(() -> {
-            HttpURLConnection conn = null;
+            HttpURLConnection connection = null;
             try {
+                if (!submission && !songId.equals(currentId)) return;
                 Uri stream = Uri.parse(source);
-                String path = stream.getPath();
-                if (path == null || !path.endsWith("/stream.view")) return;
-                if (!"https".equalsIgnoreCase(stream.getScheme()) && !"http".equalsIgnoreCase(stream.getScheme())) return;
-                String scrobblePath = path.substring(0, path.length() - "stream.view".length()) + "scrobble.view";
-                Uri uri = stream.buildUpon().path(scrobblePath)
+                String originalPath = stream.getEncodedPath();
+                if (originalPath == null || !originalPath.endsWith("/stream.view")) throw new Exception("unexpected stream URL path");
+                String scheme = stream.getScheme();
+                if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) throw new Exception("invalid server URL");
+                String replacementPath = originalPath.substring(0, originalPath.length() - "stream.view".length()) + "scrobble.view";
+                Uri.Builder request = stream.buildUpon().encodedPath(replacementPath).clearQuery();
+                // Do not forward 'stream' options or trust that the original id query survived a URL rewrite.
+                for (String key : new String[]{"u", "p", "t", "s", "v", "c"}) {
+                    String value = stream.getQueryParameter(key);
+                    if (value != null) request.appendQueryParameter(key, value);
+                }
+                request.appendQueryParameter("f", "json")
+                        .appendQueryParameter("id", songId)
                         .appendQueryParameter("submission", String.valueOf(submission))
-                        .appendQueryParameter("time", String.valueOf(startedAt)).build();
-                conn = (HttpURLConnection) new URL(uri.toString()).openConnection();
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setUseCaches(false);
-                conn.setRequestMethod("GET");
-                if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) throw new Exception("HTTP " + conn.getResponseCode());
-                try (InputStream in = conn.getInputStream(); ByteArrayOutputStream body = new ByteArrayOutputStream()) {
-                    byte[] bytes = new byte[4096]; int n;
-                    while ((n = in.read(bytes)) >= 0 && body.size() < 32768) body.write(bytes, 0, n);
+                        .appendQueryParameter("time", String.valueOf(startedAt));
+                Uri endpoint = request.build();
+                connection = (HttpURLConnection) new URL(endpoint.toString()).openConnection();
+                connection.setConnectTimeout(9000);
+                connection.setReadTimeout(9000);
+                connection.setUseCaches(false);
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestMethod("GET");
+                int http = connection.getResponseCode();
+                if (http < 200 || http >= 300) throw new Exception("HTTP " + http);
+                try (InputStream in = connection.getInputStream(); ByteArrayOutputStream body = new ByteArrayOutputStream()) {
+                    byte[] bytes = new byte[4096];
+                    int n;
+                    while ((n = in.read(bytes)) != -1 && body.size() < 32768) body.write(bytes, 0, n);
                     JSONObject response = new JSONObject(body.toString("UTF-8")).getJSONObject("subsonic-response");
-                    if (!"ok".equalsIgnoreCase(response.optString("status"))) throw new Exception("Server rejected scrobble");
+                    if (!"ok".equalsIgnoreCase(response.optString("status"))) {
+                        JSONObject error = response.optJSONObject("error");
+                        String code = error == null ? "unknown" : String.valueOf(error.optInt("code", -1));
+                        // Deliberately omit the error message: a reverse proxy could echo credentials.
+                        throw new Exception("Navidrome API error " + code);
+                    }
+                }
+                if (songId.equals(currentId)) {
+                    if (submission) {
+                        telemetryPlayStatus = "accepted by server";
+                        telemetryLastPlaySuccessAt = System.currentTimeMillis();
+                    } else {
+                        telemetryNowPlayingStatus = "accepted by server";
+                        telemetryLastNowPlayingSuccessAt = System.currentTimeMillis();
+                    }
+                } else if (submission) {
+                    telemetryLastPlaySuccessAt = System.currentTimeMillis();
                 }
             } catch (Exception ex) {
-                android.util.Log.w("AndroidNav", "Navidrome scrobble request failed: " + ex.getClass().getSimpleName());
+                // Don't include the full URL, auth token or user password in either UI or logs.
+                String message = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+                if (message.length() > 100) message = ex.getClass().getSimpleName();
+                if (songId.equals(currentId)) {
+                    if (submission) telemetryPlayStatus = "failed: " + message;
+                    else telemetryNowPlayingStatus = "failed: " + message;
+                }
+                android.util.Log.w("AndroidNav", "Telemetry " + (submission ? "play" : "now-playing") + " failed (" + ex.getClass().getSimpleName() + ")");
             } finally {
-                if (conn != null) conn.disconnect();
+                if (connection != null) connection.disconnect();
             }
         });
+    }
+
+    private void resetTelemetrySession() {
+        telemetryStreamUrl = "";
+        telemetryStartedAt = 0;
+        telemetryLastTickAt = 0;
+        telemetryLastNowPlayingMs = 0;
+        telemetryListenedMs = 0;
+        telemetrySubmitted = false;
     }
 
     private void beginTelemetry(String url) {
@@ -556,20 +614,46 @@ public class MainActivity extends Activity {
         telemetryStreamUrl = url == null ? "" : url;
         telemetryStartedAt = System.currentTimeMillis();
         telemetryLastTickAt = SystemClock.elapsedRealtime();
+        telemetryLastNowPlayingMs = telemetryLastTickAt;
+        telemetryStatusTrack = currentTitle;
+        telemetryNowPlayingStatus = "queued";
+        telemetryPlayStatus = "waiting for listening threshold";
         reportTelemetry(false);
     }
 
     private void recordPlaybackProgress() {
-        if (!isPlaying || telemetryStartedAt == 0 || telemetrySubmitted) return;
+        if (!isPlaying || telemetryStartedAt == 0) return;
         long now = SystemClock.elapsedRealtime();
-        if (telemetryLastTickAt > 0) telemetryListenedMs += Math.min(5000, Math.max(0, now - telemetryLastTickAt));
+        if (telemetryLastTickAt > 0)
+            telemetryListenedMs += Math.min(5000, Math.max(0, now - telemetryLastTickAt));
         telemetryLastTickAt = now;
-        // Count a play after 50% or four minutes, whichever comes first, with a 30s minimum.
-        long threshold = cachedDurationMs > 0 ? Math.max(30000, Math.min(240000, cachedDurationMs / 2L)) : 240000;
-        if (telemetryListenedMs >= threshold) {
-            telemetrySubmitted = true;
-            reportTelemetry(true);
+
+        // Navidrome's Now Playing sessions expire, so refresh them as playback continues.
+        if (now - telemetryLastNowPlayingMs >= 30000) {
+            telemetryLastNowPlayingMs = now;
+            reportTelemetry(false);
         }
+
+        if (!telemetrySubmitted) {
+            long threshold = cachedDurationMs > 0 ? Math.max(30000, Math.min(240000, cachedDurationMs / 2L)) : 240000;
+            if (telemetryListenedMs >= threshold) {
+                telemetrySubmitted = true;
+                reportTelemetry(true);
+            }
+        }
+    }
+
+    private String telemetryStatusJson() {
+        try {
+            JSONObject status = new JSONObject();
+            status.put("track", telemetryStatusTrack);
+            status.put("nowPlaying", telemetryNowPlayingStatus);
+            status.put("playCount", telemetryPlayStatus);
+            status.put("listenedSeconds", telemetryListenedMs / 1000L);
+            status.put("lastNowPlayingSuccessAt", telemetryLastNowPlayingSuccessAt);
+            status.put("lastPlaySuccessAt", telemetryLastPlaySuccessAt);
+            return status.toString();
+        } catch (Exception ignored) { return "{}"; }
     }
 
     private void parseQueue(String json) throws Exception {
@@ -865,6 +949,13 @@ public class MainActivity extends Activity {
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
                 intent.setType("*/*"); // Include Downloads font files even when provider MIME types are inaccurate.
                 startActivityForResult(intent, REQ_FONT);
+            });
+        }
+        @JavascriptInterface public String getTelemetryStatus() { return telemetryStatusJson(); }
+        @JavascriptInterface public void testNowPlaying() {
+            runOnUiThread(() -> {
+                if (!isPlaying || telemetryStreamUrl.isEmpty()) telemetryNowPlayingStatus = "start playing a song first";
+                else reportTelemetry(false);
             });
         }
         @JavascriptInterface public void clearFont() {
