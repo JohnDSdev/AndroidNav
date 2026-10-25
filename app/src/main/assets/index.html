@@ -127,6 +127,7 @@ html,body{background:#050505;overscroll-behavior-y:contain}
 .fields input:focus{border-color:rgba(255,255,255,.72);background:rgba(15,15,15,.50)}
 .fields input::placeholder{color:rgba(255,255,255,.46)}
 .font-status{font-size:12px;color:rgba(255,255,255,.75);overflow-wrap:anywhere;margin-top:7px;line-height:1.5}
+.telemetry-status{font-size:12px;color:rgba(255,255,255,.82);overflow-wrap:anywhere;white-space:pre-line;line-height:1.65;margin-top:10px}
 .btn{border-radius:99px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.24)}
 button:focus-visible,input:focus-visible,[role=slider]:focus-visible{outline:2px solid white;outline-offset:4px}
 .mini-player[hidden]{display:none}
@@ -275,6 +276,7 @@ button:focus-visible,input:focus-visible,[role=slider]:focus-visible{outline:2px
 
   function settingsHtml(){return `<section class="settings"><div class="settings-title">settings</div>
     <div class="setting"><div class="setting-name">navidrome</div><div class="setting-desc">server connection</div><div class="fields"><input id="serverInput" type="url" placeholder="https://music.example.com" value="${esc(cfg.server)}"><input id="userInput" type="text" placeholder="username" value="${esc(cfg.user)}"><input id="passInput" type="password" placeholder="password" value="${esc(cfg.pass)}"></div><div class="actions"><button id="connectBtn" class="btn" type="button">connect</button><button id="reloadBtn" class="btn" type="button">reload</button></div><div id="connectionStatus" class="setting-desc" style="margin-top:9px"></div></div>
+    <div class="setting"><div class="setting-name">listening reports</div><div class="setting-desc">reports now playing every 30 seconds and counts songs after enough listening. server acknowledgements appear here.</div><div class="actions"><button id="testNowPlaying" class="btn" type="button">check now playing</button></div><div id="telemetryStatus" class="telemetry-status" aria-live="polite">no listening activity yet</div></div>
     <div class="setting"><div class="setting-name">background</div><div class="setting-desc">also used as Android media artwork.</div><div class="actions"><button id="pickBackground" class="btn" type="button">choose image</button><button id="clearBackground" class="btn" type="button">reset</button></div></div>
     <div class="setting"><div class="setting-name">custom font</div><div class="setting-desc">choose a .ttf, .otf, .woff, or .woff2 font from Downloads or Files. applies throughout the app and stays after restarting.</div><div class="actions"><button id="pickFont" class="btn" type="button">choose font</button><button id="clearFont" class="btn" type="button">use default</button></div><div id="fontStatus" class="font-status"></div></div>
     <div class="setting"><div class="setting-name">background dim</div><div class="dim-control"><div id="dimSeek" class="seek-wrap"><div class="seek-track"><div id="dimFill" class="seek-fill"></div><div id="dimThumb" class="seek-thumb"></div></div></div><div id="dimValue" class="dim-value"></div></div></div>
@@ -312,8 +314,23 @@ button:focus-visible,input:focus-visible,[role=slider]:focus-visible{outline:2px
     $('#pickBackground')?.addEventListener('click',()=>{try{AndroidPlayer.chooseBackground();}catch(_){alert('background picker is unavailable.');}});$('#clearBackground')?.addEventListener('click',()=>{try{AndroidPlayer.clearBackground();}catch(_){}});
     $('#pickFont')?.addEventListener('click',()=>{try{AndroidPlayer.chooseFont();}catch(_){alert('font picker is unavailable.');}});
     $('#clearFont')?.addEventListener('click',()=>{try{AndroidPlayer.clearFont();}catch(_){}});
-    showFontName();bindDimControl();
+    $('#testNowPlaying')?.addEventListener('click',()=>{try{AndroidPlayer.testNowPlaying();refreshTelemetryStatus();}catch(_){const el=$('#telemetryStatus');if(el)el.textContent='native telemetry is unavailable.';}});
+    showFontName();refreshTelemetryStatus();bindDimControl();
   }
+  function refreshTelemetryStatus(){
+    const el=$('#telemetryStatus');if(!el)return;
+    try{
+      const state=JSON.parse(AndroidPlayer.getTelemetryStatus());
+      const dateLabel=stamp=>stamp?new Date(stamp).toLocaleTimeString():'';
+      el.textContent=[
+        'track: '+(state.track||'none'),
+        'now playing: '+(state.nowPlaying||'not sent yet')+(state.lastNowPlayingSuccessAt?' · last accepted '+dateLabel(state.lastNowPlayingSuccessAt):''),
+        'play count: '+(state.playCount||'not submitted yet')+(state.lastPlaySuccessAt?' · last accepted '+dateLabel(state.lastPlaySuccessAt):''),
+        'listened: '+(state.listenedSeconds||0)+' seconds'
+      ].join('\n');
+    }catch(_){el.textContent='report status unavailable.';}
+  }
+  setInterval(refreshTelemetryStatus,1500);
   let fontLoadGeneration=0;
   function showFontName(message){
     const status=$('#fontStatus');if(!status)return;
