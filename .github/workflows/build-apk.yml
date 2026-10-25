@@ -63,7 +63,6 @@ jobs:
           assert 'recordPlaybackProgress()' in native and 'SystemClock.elapsedRealtime()' in native, 'listening-time measurement missing'
           assert 'appendQueryParameter("id", songId)' in native, 'scrobble song id missing'
           assert 'clearQuery()' in native, 'scrobble uses stream query without filtering'
-          assert 'telemetryLastNowPlayingMs >= 30000' not in native, 'bad heartbeat check'
           assert 'now - telemetryLastNowPlayingMs >= 30000' in native, 'now playing heartbeat missing'
           assert 'getTelemetryStatus()' in native and 'testNowPlaying()' in native, 'telemetry debug API missing'
           assert 'id="telemetryStatus"' in html and 'id="testNowPlaying"' in html, 'telemetry debug controls missing'
