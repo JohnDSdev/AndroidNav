@@ -258,7 +258,7 @@ public class MainActivity extends Activity {
             long count = 0;
             while ((n = in.read(buf)) != -1) {
                 count += n;
-                if (count > 8 * 1024 * 1024) return false;
+                if (count > 8 * 1024 * 1024) { temp.delete(); return false; }
                 out.write(buf, 0, n);
             }
         } catch (Exception ignored) { temp.delete(); return false; }
